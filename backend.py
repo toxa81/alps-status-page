@@ -9,12 +9,12 @@ class SlurmJob(BaseModel):
     num_nodes: int
 
 class vClusterStatus(BaseModel):
-    num_nodes_total: Optional[int] = None
-    num_nodes_allocated: Optional[int] = None
-    num_nodes_idle: Optional[int] = None
-    num_finished_jobs: Optional[int] = None
-    running_jobs: Optional[List[SlurmJob]] = None
-    pending_jobs: Optional[List[SlurmJob]] = None
+    num_nodes_total: int | None = None
+    num_nodes_allocated: int | None = None
+    num_nodes_idle: int | None = None
+    num_finished_jobs: int | None = None
+    running_jobs: List[SlurmJob] | None = None
+    pending_jobs: List[SlurmJob] | None = None
 
 vcluster_status: Dict[str, vClusterStatus] = {}
 
