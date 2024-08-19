@@ -12,5 +12,12 @@ output=$(sinfo -h -o "%T %D")
 num_nodes_allocated=$(echo "$output" | awk '$1 == "allocated" {print $2}')
 num_nodes_idle=$(echo "$output" | awk '$1 == "idle" {print $2}')
 
-echo '{}' | jq ".num_nodes_total = $num_nodes_total" | jq ".num_nodes_allocated = $num_nodes_allocated" | jq ".num_nodes_idle = $num_nodes_idle" | jq ".running_jobs = $running_jobs" | jq ".pending_jobs = $pending_jobs" | jq ".num_finished_jobs = $num_finished_jobs"
+json=$(echo '{}' | jq ".num_nodes_total = $num_nodes_total" | jq ".num_nodes_allocated = $num_nodes_allocated" | jq ".num_nodes_idle = $num_nodes_idle" | jq ".running_jobs = $running_jobs" | jq ".pending_jobs = $pending_jobs" | jq ".num_finished_jobs = $num_finished_jobs")
+
+curl -X 'PUT' "http://148.187.151.141:8000/status/$CLUSTER_NAME" \
+     -H 'accept: application/json' \
+     -H 'Content-Type: application/json' \
+     -d "$json" \
+     --connect-timeout 5 > /dev/null
+
 
