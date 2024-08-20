@@ -1,12 +1,16 @@
+import logging
+import json
+
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import Column, Integer, String, Text
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy import Column, Integer, String, Text, TIMESTAMP, func, create_engine
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -20,7 +24,7 @@ class SlurmJob(BaseModel):
     slurm_job_id: str
     num_nodes: int
 
-class vClusterStatus(BaseModel):
+class vClusterStatusIn(BaseModel):
     num_nodes_total: int | None = None
     num_nodes_allocated: int | None = None
     num_nodes_idle: int | None = None
@@ -28,7 +32,16 @@ class vClusterStatus(BaseModel):
     running_jobs: List[SlurmJob] | None = None
     pending_jobs: List[SlurmJob] | None = None
 
-#vcluster_status: Dict[str, vClusterStatus] = {}
+class vClusterStatusOut(BaseModel):
+    num_nodes_total: int | None = None
+    num_nodes_allocated: int | None = None
+    num_nodes_idle: int | None = None
+    num_finished_jobs: int | None = None
+    running_jobs: List[int] | None = None
+    pending_jobs: List[int] | None = None
+
+class vClusterStatusOut_v2(BaseModel):
+    data: Dict[str, Any]
 
 def get_db():
     db = SessionLocal()
@@ -41,36 +54,79 @@ class Item(Base):
     __tablename__ = "vcluster"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
-    jsondata = Column(Text, index=True)
+    name = Column(String, nullable=False)
+    jsondata = Column(Text, nullable=False)
+    datetime = Column(TIMESTAMP, server_default=func.now(), nullable=False)
 
 # TODO: convert dictionary with running/queuing jobs to array with the following values:
-# value[0]: number of jobs with 1 node
-# value[1]: number of jobs with 2 nodes
-# value[2]: number of jobs with 3-4 nodes
-# value[3]: number of jobs with 5-8 nodes
-# value[4]: number of jobs with 9-16 nodes
-# value[5]: number of jobs with 17-32 nodes
-# value[6]: number of jobs with 33-64 nodes
-# value[7]: number of jobs with 65-128 nodes
-# value[8]: number of jobs with 129-256 nodes
-# value[9]: number of jobs with > 256 nodes
 
-# TODO: handle properly array jobs
+# TODO: handle properly pending array jobs
+
+def get_index(num_nodes):
+# index 0: number of jobs with 1 node
+# index 1: number of jobs with 2 nodes
+# index 2: number of jobs with 3-4 nodes
+# index 3: number of jobs with 5-8 nodes
+# index 4: number of jobs with 9-16 nodes
+# index 5: number of jobs with 17-32 nodes
+# index 6: number of jobs with 33-64 nodes
+# index 7: number of jobs with 65-128 nodes
+# index 8: number of jobs with 129-256 nodes
+# index 9: number of jobs with > 256 nodes
+    ranges = {
+        range(1, 2): 0,
+        range(2, 3): 1,
+        range(3, 5): 2,
+        range(5, 9): 3,
+        range(9, 17): 4,
+        range(17, 33): 5,
+        range(33, 65): 6,
+        range(65, 129): 7,
+        range(129, 257): 8
+    }
+    for r, index in ranges.items():
+        if num_nodes in r:
+            return index
+    return 9
+
 
 @app.put("/status/{vcluster}")
-def put_data(vcluster: str, st: vClusterStatus, db: Session = Depends(get_db)):
-#    global vcluster_status
-#    vcluster_status[vcluster] = st
-    db_item = Item(name=vcluster, jsondata=st.json())
+def put_data(vcluster: str, st: vClusterStatusIn, db: Session = Depends(get_db)):
+    d = st.dict()
+
+    rj_hist = [0 for i in range(10)]
+    for e in d["running_jobs"]:
+        rj_hist[get_index(e["num_nodes"])] += 1
+
+    pj_hist = [0 for i in range(10)]
+    for e in d["pending_jobs"]:
+        pj_hist[get_index(e["num_nodes"])] += 1
+
+    d["running_jobs"] = rj_hist
+    d["pending_jobs"] = pj_hist
+
+    db_item = Item(name=vcluster, jsondata=json.dumps(d, indent=2))
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
+    logger.info(f"running jobs histogram: {rj_hist}")
+    logger.info(f"pending jobs histogram: {pj_hist}")
     return st
 
-#@app.get("/status/{vcluster}", response_model=vClusterStatus)
-#def get_data(vcluster: str):
-#    if not vcluster in vcluster_status:
-#        raise HTTPException(status_code=404, detail="Item not found")
-#    return vcluster_status[vcluster]
-#
+@app.get("/status/{vcluster}", response_model=vClusterStatusOut_v2)
+def get_data(vcluster: str, db: Session = Depends(get_db)):
+    try:
+        record = (
+            db.query(Item)
+            .filter(Item.name == vcluster)
+            .order_by(Item.datetime.desc())
+            .first()
+        )
+        if not record:
+            raise HTTPException(status_code=404, detail="Record not found")
+        return vClusterStatusOut_v2(data={"jsondata" : json.loads(record.jsondata), "datetime" : record.datetime})
+        #return json.loads(record.jsondata)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
