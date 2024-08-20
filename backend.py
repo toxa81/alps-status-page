@@ -1,5 +1,7 @@
 import logging
 import json
+import os
+import re
 
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
@@ -14,9 +16,9 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-DATABASE_URL = "mysql+mysqlconnector://root:mysecretpassword@127.0.0.1/slurm_data"
+#DATABASE_URL = "mysql+mysqlconnector://root:mysecretpassword@127.0.0.1/slurm_data"
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(os.environ['DATABASE_URL'])
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -41,7 +43,7 @@ class vClusterStatusOut(BaseModel):
     pending_jobs: List[int] | None = None
 
 class vClusterStatusOut_v2(BaseModel):
-    data: Dict[str, Any]
+    response: Dict[str, Any]
 
 def get_db():
     db = SessionLocal()
@@ -57,10 +59,6 @@ class Item(Base):
     name = Column(String, nullable=False)
     jsondata = Column(Text, nullable=False)
     datetime = Column(TIMESTAMP, server_default=func.now(), nullable=False)
-
-# TODO: convert dictionary with running/queuing jobs to array with the following values:
-
-# TODO: handle properly pending array jobs
 
 def get_index(num_nodes):
 # index 0: number of jobs with 1 node
@@ -100,7 +98,16 @@ def put_data(vcluster: str, st: vClusterStatusIn, db: Session = Depends(get_db))
 
     pj_hist = [0 for i in range(10)]
     for e in d["pending_jobs"]:
-        pj_hist[get_index(e["num_nodes"])] += 1
+        job_id = e["slurm_job_id"]
+        match = re.search(r'\[(\d+)-(\d+)\]', job_id)
+        if match:
+            lower_bound = int(match.group(1))
+            upper_bound = int(match.group(2))
+            njobs = upper_bound - lower_bound + 1
+            logger.info(f"array job: {lower_bound} {upper_bound} {njobs}")
+        else:
+            njobs = 1
+        pj_hist[get_index(e["num_nodes"])] += njobs
 
     d["running_jobs"] = rj_hist
     d["pending_jobs"] = pj_hist
@@ -124,8 +131,7 @@ def get_data(vcluster: str, db: Session = Depends(get_db)):
         )
         if not record:
             raise HTTPException(status_code=404, detail="Record not found")
-        return vClusterStatusOut_v2(data={"jsondata" : json.loads(record.jsondata), "datetime" : record.datetime})
-        #return json.loads(record.jsondata)
+        return vClusterStatusOut_v2(response={"body" : json.loads(record.jsondata), "datetime" : record.datetime})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

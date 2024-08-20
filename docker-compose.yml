@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:latest
+    container_name: mysql-db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - slurm_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: backend
+    command: uvicorn backend:app --host 0.0.0.0 --port 8000
+    volumes:
+      - .:/app
+    working_dir: /app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mysql
+    environment:
+      DATABASE_URL: mysql+mysqlconnector://root:${MYSQL_ROOT_PASSWORD}@mysql-db/slurm_data
+
+volumes:
+  slurm_data:
+    external: true
