@@ -28,6 +28,7 @@ class SlurmJob(BaseModel):
     slurm_job_id: str
     num_nodes: int
 
+# this data comes in from the bash script executed on the login node of a vcluster
 class vClusterStatusIn(BaseModel):
     num_nodes_total: int | None = None
     num_nodes_allocated: int | None = None
@@ -36,14 +37,15 @@ class vClusterStatusIn(BaseModel):
     running_jobs: List[SlurmJob] | None = None
     pending_jobs: List[SlurmJob] | None = None
 
-class vClusterStatusOut(BaseModel):
-    num_nodes_total: int | None = None
-    num_nodes_allocated: int | None = None
-    num_nodes_idle: int | None = None
-    num_finished_jobs: int | None = None
-    running_jobs: List[int] | None = None
-    pending_jobs: List[int] | None = None
+#class vClusterStatusOut(BaseModel):
+#    num_nodes_total: int | None = None
+#    num_nodes_allocated: int | None = None
+#    num_nodes_idle: int | None = None
+#    num_finished_jobs: int | None = None
+#    running_jobs: List[int] | None = None
+#    pending_jobs: List[int] | None = None
 
+# generic data dictionary that is sent as a response
 class vClusterStatusOut_v2(BaseModel):
     body: Dict[str, Any]
     datetime: str
@@ -119,8 +121,6 @@ def put_data(vcluster: str, st: vClusterStatusIn, db: Session = Depends(get_db))
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
-    logger.info(f"running jobs histogram: {rj_hist}")
-    logger.info(f"pending jobs histogram: {pj_hist}")
     return st
 
 @app.get("/status/{vcluster}", response_model=vClusterStatusOut_v2)
@@ -129,7 +129,7 @@ def get_data(vcluster: str, db: Session = Depends(get_db)):
         record = (
             db.query(Item)
             .filter(Item.name == vcluster)
-            .order_by(Item.datetime.desc())
+            .order_by(Item.datetime.desc()) # descending order
             .first()
         )
         if not record:
@@ -141,27 +141,33 @@ def get_data(vcluster: str, db: Session = Depends(get_db)):
 
 @app.get("/history/{vcluster}", response_model=vClusterStatusOut_v2)
 def get_data(vcluster: str, db: Session = Depends(get_db)):
-    N = 30  # example value for N
+    N = 3000  # example value for N
     time_now = datetime.now()
     time_begin = time_now - timedelta(minutes=N)
     try:
         query = (
             db.query(Item)
             .filter((Item.name == vcluster) & (Item.datetime.between(time_begin, time_now)))
-            .order_by(Item.datetime.desc())
+            .order_by(Item.datetime)
         )
         if not query:
             raise HTTPException(status_code=404, detail="SQL query failed")
 
-        r = []
+        time_shift = []
+        num_nodes_total = []
+        num_nodes_allocated = []
+        num_nodes_idle = []
         for e in query:
-            time_shift = (e.timestamp - time_now).total_seconds() / 60
-        r.append({
-            'value': 1.0,
-            'time_shift': time_shift
-        })
-
-        return vClusterStatusOut_v2(body=r, datetime=datetime.now())
+            d = json.loads(e.jsondata)
+            time_shift.append((e.datetime - time_now).total_seconds() / 60)
+            num_nodes_total.append(d["num_nodes_total"])
+            num_nodes_allocated.append(d["num_nodes_allocated"])
+            num_nodes_idle.append(d["num_nodes_idle"])
+        
+        return vClusterStatusOut_v2(body={"count": query.count(), "time_shift": time_shift,
+                                          "num_nodes_total": num_nodes_total,
+                                          "num_nodes_allocated": num_nodes_allocated,
+                                          "num_nodes_idle": num_nodes_idle}, datetime=time_now.isoformat())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
