@@ -43,7 +43,8 @@ class vClusterStatusOut(BaseModel):
     pending_jobs: List[int] | None = None
 
 class vClusterStatusOut_v2(BaseModel):
-    response: Dict[str, Any]
+    body: Dict[str, Any]
+    datetime: str
 
 def get_db():
     db = SessionLocal()
@@ -131,7 +132,7 @@ def get_data(vcluster: str, db: Session = Depends(get_db)):
         )
         if not record:
             raise HTTPException(status_code=404, detail="Record not found")
-        return vClusterStatusOut_v2(response={"body" : json.loads(record.jsondata), "datetime" : record.datetime})
+        return vClusterStatusOut_v2(body=json.loads(record.jsondata), datetime=record.datetime.isoformat())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
