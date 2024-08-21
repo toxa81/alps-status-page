@@ -10,6 +10,13 @@ def fetch_data(vcluster_name):
     else:
         return {}
 
+def fetch_history(vcluster_name):
+    response = requests.get(f"http://148.187.151.141:8000/history/{vcluster_name}")
+    if response.status_code == 200:
+        return response.json()
+    else:
+        return {}
+
 labels = ['eiger', 'todi']
 
 @ui.page('/')
@@ -22,6 +29,21 @@ def main():
             response = fetch_data(label)
             date = response["datetime"]
             data = response["body"]
+            history = fetch_history(label)["body"]
+            # make some preparations
+            hist_avail = []
+            hist_unavail = []
+            hist_occupancy = []
+            hist_availability = []
+            for i in range(history["count"]):
+                hist_avail.append(history["num_nodes_allocated"][i] + history["num_nodes_idle"][i])
+                hist_unavail.append(history["num_nodes_total"][i] - hist_avail[i])
+                hist_availability.append(round(100 * float(hist_avail[i] / history["num_nodes_total"][i]), 2))
+                if hist_avail[i]:
+                    hist_occupancy.append(round(100 * float(history["num_nodes_allocated"][i] / hist_avail[i]), 2))
+                else:
+                    hist_occupancy.append(0)
+
             with ui.tab_panel(tab):
                 with ui.column().classes('w-full items-center'):
                     columns = [
@@ -44,22 +66,41 @@ def main():
                     ui.table(columns=columns, rows=rows, row_key='name')
                     categories = ['1','2','3-4','5-8','9-16','17-32','33-64','65-128','129-256','>256']
                     with ui.pyplot():
+                        plt.title('Pending jobs')
                         plt.bar(categories, data["pending_jobs"])
                         plt.ylabel('Number of jobs')
                         plt.xlabel('Number of nodes')
                         plt.xticks(rotation=90)
-                        plt.title('Pending jobs')
                         plt.subplots_adjust(bottom=0.25)
                         plt.gca().yaxis.set_major_locator(MaxNLocator(min_n_ticks=0, integer=True))
 
                     with ui.pyplot():
+                        plt.title('Running jobs')
                         plt.bar(categories, data["running_jobs"])
                         plt.ylabel('Number of jobs')
                         plt.xlabel('Number of nodes')
                         plt.xticks(rotation=90)
-                        plt.title('Running jobs')
                         plt.subplots_adjust(bottom=0.25)
                         plt.gca().yaxis.set_major_locator(MaxNLocator(min_n_ticks=0, integer=True))
+
+                    with ui.pyplot():
+                        plt.title('Node distribution')
+                        plt.plot(history["time_shift"], history["num_nodes_total"], 'o-', label='total')
+                        plt.plot(history["time_shift"], hist_avail, 'o-', label='available')
+                        plt.plot(history["time_shift"], hist_unavail, 'o-', label='unavailable')
+                        plt.xlabel('Minutes in the past')
+                        plt.ylabel('Node count')
+                        plt.ylim(bottom=0)
+                        plt.legend()
+
+                    with ui.pyplot():
+                        plt.title('Availability and occupancy')
+                        plt.plot(history["time_shift"], hist_availability, 'o-', label='node avaialability')
+                        plt.plot(history["time_shift"], hist_occupancy, 'o-', label='occupancy of available nodes')
+                        plt.xlabel('Minutes in the past')
+                        plt.ylabel('%')
+                        plt.ylim(bottom=0)
+                        plt.legend()
 
 #        with ui.tab_panel(one):
 #            with ui.column().classes('w-full items-center'):
