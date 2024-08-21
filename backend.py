@@ -3,6 +3,8 @@ import json
 import os
 import re
 
+from datetime import datetime, timedelta
+
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
@@ -133,6 +135,33 @@ def get_data(vcluster: str, db: Session = Depends(get_db)):
         if not record:
             raise HTTPException(status_code=404, detail="Record not found")
         return vClusterStatusOut_v2(body=json.loads(record.jsondata), datetime=record.datetime.isoformat())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/history/{vcluster}", response_model=vClusterStatusOut_v2)
+def get_data(vcluster: str, db: Session = Depends(get_db)):
+    N = 30  # example value for N
+    time_now = datetime.now()
+    time_begin = time_now - timedelta(minutes=N)
+    try:
+        query = (
+            db.query(Item)
+            .filter((Item.name == vcluster) & (Item.datetime.between(time_begin, time_now)))
+            .order_by(Item.datetime.desc())
+        )
+        if not query:
+            raise HTTPException(status_code=404, detail="SQL query failed")
+
+        r = []
+        for e in query:
+            time_shift = (e.timestamp - time_now).total_seconds() / 60
+        r.append({
+            'value': 1.0,
+            'time_shift': time_shift
+        })
+
+        return vClusterStatusOut_v2(body=r, datetime=datetime.now())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
