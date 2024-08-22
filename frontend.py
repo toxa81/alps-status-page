@@ -54,12 +54,12 @@ def main():
                     num_unavail = data["num_nodes_total"] - num_avail
                     rows = [
                         {'name': 'Total number of nodes',       'value': data["num_nodes_total"]},
-                        {'name': 'Number of avaialble nodes',   'value': num_avail},
+                        {'name': 'Number of available nodes',   'value': num_avail},
                         {'name': 'Node availability (%)',       'value': round(100 * float(num_avail /  data["num_nodes_total"]), 2)},
                         {'name': 'Number of allocate nodes',    'value': data["num_nodes_allocated"]},
                         {'name': 'Number of idle nodes',        'value': data["num_nodes_idle"]},
                         {'name': 'Number of unavailable nodes', 'value': num_unavail},
-                        {'name': 'Occupancy of avaialble nodes (%)', 'value': round(100 * float(data["num_nodes_allocated"] / num_avail), 2)},
+                        {'name': 'Occupancy of available nodes (%)', 'value': round(100 * float(data["num_nodes_allocated"] / num_avail), 2)},
                         {'name': 'Number of finished jobs in the past 24H', 'value': data["num_finished_jobs"]},
                         {'name': 'Last measurment date and time (UTC)', 'value': date}
                     ]
@@ -95,7 +95,7 @@ def main():
 
                     with ui.pyplot():
                         plt.title('Availability and occupancy')
-                        plt.plot(history["time_shift"], hist_availability, 'o-', label='node avaialability')
+                        plt.plot(history["time_shift"], hist_availability, 'o-', label='node availability')
                         plt.plot(history["time_shift"], hist_occupancy, 'o-', label='occupancy of available nodes')
                         plt.xlabel('Minutes in the past')
                         plt.ylabel('%')

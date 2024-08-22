@@ -10,6 +10,7 @@ services:
       - slurm_data:/var/lib/mysql
     ports:
       - "3306:3306"
+    restart: always
 
   web-api:
     build:
@@ -26,6 +27,7 @@ services:
       - mysql
     environment:
       DATABASE_URL: mysql+mysqlconnector://root:${MYSQL_ROOT_PASSWORD}@mysql-db/slurm_data
+    restart: always
 
   web:
     build:
@@ -41,6 +43,7 @@ services:
     depends_on:
       - mysql
       - web-api
+    restart: always
 
 volumes:
   slurm_data:
