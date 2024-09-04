@@ -6,15 +6,26 @@ pending_jobs=$(squeue -o "%i %D" --noheader --states=PENDING | awk '{print "{\"s
 
 num_finished_jobs=$(sacct --noheader -a --starttime=$(date -d "24 hours ago" '+%Y-%m-%dT%H:%M:%S') --endtime=$(date '+%Y-%m-%dT%H:%M:%S') --state=CD | wc -l)
 
-num_nodes_total=$(sinfo --noheader -O Nodes)
+#num_nodes_total=$(sinfo --noheader -O Nodes)
+#
+#output=$(sinfo -h -o "%T %D")
+#
+#num_nodes_allocated=$(echo "$output" | awk '$1 == "allocated" {print $2; found=1} END {if (!found) print 0}')
+#echo "Number of allocated nodes: $num_nodes_allocated"
+#
+#num_nodes_idle=$(echo "$output" | awk '$1 == "idle" {print $2; found=1} END {if (!found) print 0}')
+#echo "Number of idle nodes: $num_nodes_idle"
 
-output=$(sinfo -h -o "%T %D")
+num_nodes_total=$(sinfo -h -o "%D" -p normal)
+num_nodes_idle=$(sinfo -h -o "%D" -p normal -t idle)
+if [ -z "$num_nodes_idle" ]; then
+  num_nodes_idle=0
+fi
+num_nodes_allocated=$(sinfo -h -o "%D" -p normal -t allocated)
+if [ -z "$num_nodes_allocated" ]; then
+  num_nodes_allocated=0
+fi
 
-num_nodes_allocated=$(echo "$output" | awk '$1 == "allocated" {print $2; found=1} END {if (!found) print 0}')
-echo "Number of allocated nodes: $num_nodes_allocated"
-
-num_nodes_idle=$(echo "$output" | awk '$1 == "idle" {print $2; found=1} END {if (!found) print 0}')
-echo "Number of idle nodes: $num_nodes_idle"
 
 json=$(echo '{}' | \
     jq ".num_nodes_total = $num_nodes_total" | \
