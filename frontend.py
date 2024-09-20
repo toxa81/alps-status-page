@@ -1,7 +1,14 @@
+import logging
 import requests
 from nicegui import ui
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
+import numpy as np
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+logger = logging.getLogger(__name__)
+
 
 def fetch_data(vcluster_name):
     response = requests.get(f"http://148.187.151.141:8000/status/{vcluster_name}")
@@ -17,7 +24,7 @@ def fetch_history(vcluster_name):
     else:
         return {}
 
-labels = ['eiger', 'todi']
+labels = ['todi', 'eiger', 'bristen', 'daint']
 
 @ui.page('/')
 def main():
@@ -52,14 +59,19 @@ def main():
                     ]
                     num_avail = data["num_nodes_allocated"] + data["num_nodes_idle"]
                     num_unavail = data["num_nodes_total"] - num_avail
+                    if num_avail:
+                        occ = round(100 * float(data["num_nodes_allocated"] / num_avail), 2)
+                    else:
+                        occ = 0
                     rows = [
+                        {'name': 'Gross number of nodes',       'value': data["num_nodes_gross"]},
                         {'name': 'Total number of nodes',       'value': data["num_nodes_total"]},
                         {'name': 'Number of available nodes',   'value': num_avail},
                         {'name': 'Node availability (%)',       'value': round(100 * float(num_avail /  data["num_nodes_total"]), 2)},
                         {'name': 'Number of allocate nodes',    'value': data["num_nodes_allocated"]},
                         {'name': 'Number of idle nodes',        'value': data["num_nodes_idle"]},
                         {'name': 'Number of unavailable nodes', 'value': num_unavail},
-                        {'name': 'Occupancy of available nodes (%)', 'value': round(100 * float(data["num_nodes_allocated"] / num_avail), 2)},
+                        {'name': 'Occupancy of available nodes (%)', 'value': occ},
                         {'name': 'Number of finished jobs in the past 24H', 'value': data["num_finished_jobs"]},
                         {'name': 'Last measurment date and time (UTC)', 'value': date}
                     ]
@@ -85,41 +97,63 @@ def main():
 
                     with ui.pyplot():
                         plt.title('Node distribution')
-                        plt.plot(history["time_shift"], history["num_nodes_total"], 'o-', label='total')
-                        plt.plot(history["time_shift"], hist_avail, 'o-', label='available')
-                        plt.plot(history["time_shift"], hist_unavail, 'o-', label='unavailable')
-                        plt.xlabel('Minutes in the past')
+                        plt.plot(history["time_shift"], history["num_nodes_total"], '-', label='total')
+                        plt.plot(history["time_shift"], hist_avail, '-', label='available')
+                        plt.plot(history["time_shift"], hist_unavail, '-', label='unavailable')
+                        plt.xlabel('Hours in the past')
                         plt.ylabel('Node count')
                         plt.ylim(bottom=0)
+                        plt.grid(axis='y')
                         plt.legend()
 
                     with ui.pyplot():
                         plt.title('Availability and occupancy')
-                        plt.plot(history["time_shift"], hist_availability, 'o-', label='node availability')
-                        plt.plot(history["time_shift"], hist_occupancy, 'o-', label='occupancy of available nodes')
-                        plt.xlabel('Minutes in the past')
+                        plt.plot(history["time_shift"], hist_availability, '-', label='node availability')
+                        plt.plot(history["time_shift"], hist_occupancy, '-', label='occupancy of available nodes')
+                        plt.xlabel('Hours in the past')
                         plt.ylabel('%')
                         plt.ylim(bottom=0)
+                        plt.grid(axis='y')
                         plt.legend()
 
-#        with ui.tab_panel(one):
-#            with ui.column().classes('w-full items-center'):
-#                columns = [
-#                    {'name': 'name', 'field' : 'name', 'label': 'Name', 'required': True, 'align': 'left'},
-#                    {'name': 'value', 'field' : 'value', 'label': 'Value'}
-#                ]
-#                rows = [
-#                    {'name': 'Total number of nodes', 'value': data["num_nodes_total"]}
-#                ]
-#                ui.table(columns=columns, rows=rows, row_key='name')
-#    #        with ui.column().classes('w-full items-center'):
-#    #            with ui.card().classes('no-shadow border-[1px] w-64 h-32 justify-center items-center'):
-#    #                ui.label('See, no shadow!')
-#    #            with ui.card().classes('no-shadow border-[1px] w-64 h-32 justify-center items-center'):
-#    #                ui.label('second card')
-#        with ui.tab_panel(two):
-#            ui.label('Second tab')
-#
+                    with ui.pyplot():
+                        plt.title('Requested vs. elapsed job time in the past 24H')
+                        times = data["finished_job_times"]
+                        time_x = []
+                        time_y = []
+                        for t in times:
+                            time_x.append(t[0] / 3600)
+                            time_y.append(t[1] / 3600)
+                        plt.scatter(time_x, time_y, color = 'green', marker = '.', label = 'Job time')
+                        plt.xlabel('Requested execution time (hours)')
+                        plt.ylabel('Elapsed (actual) run time (hours)')
+                        plt.ylim(bottom=0, top=24)
+                        plt.xlim(left=0, right=24)
+                        plt.xticks(range(0, 25, 1))
+                        plt.plot([0, 24], [0, 24], color = 'black')
+                        plt.plot([0, 24], [0, 20], color = 'red')
+                        plt.legend()
 
+                    with ui.pyplot():
+                        plt.title('Requested / elapsed ratio in the past 24H')
+                        b = [[] for _ in range(25)]
+                        print(f"{label}")
+                        for t in times:
+                            idx = round(t[0] / 3600)
+                            #print(f"{t[0]}  {t[1]}  idx: {idx}  ratio: {t[1] / t[0]}")
+                            if idx <= 24:
+                                b[idx].append(t[1] / t[0])
+
+                        for i in range(25):
+                            if len(b[i]) == 0:
+                                b[i].append(0)
+                            b[i] = np.array(b[i])
+
+                        plt.xlabel('Requested execution time (hours)')
+                        plt.ylabel('elapsed / requested ratio')
+                        plt.xlim(left=-0.5, right=24.5)
+                        plt.ylim(bottom=0, top=1)
+                        plt.xticks(range(0, 25, 1))
+                        plt.violinplot(b, showmeans=True, showmedians=False, widths=1, positions=[i for i in range(25)])
 
 ui.run()
