@@ -13,6 +13,21 @@ curl -X 'PUT' \
 
 # DB deployment
 
+# How to initialize the project
+To deploy first time, the following requirements and steps must be complete:
+ - `docker` is available
+ - admin password for mysql DB is set: `export MYSQL_ROOT_PASSWORD=...`
+ - docker volume to store measured data is created: `docker volume create vcluster_data`
+ - run a container with mysql and mounted voulume: `docker run --name mysql-db -e MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD -p 3306:3306 --mount type=volume,source=vcluster_data,target=/var/lib/mysql -d mysql:latest`
+ - login into mysql to create database and tables: `docker exec -it mysql-db mysql -u root -p$MYSQL_ROOT_PASSWORD`
+ - create database: `CREATE DATABASE vcluster_data;`, then `USE vcluster_data;`
+ - create initial tables for each vcluster
+
+## Initialisation of tables
+`CREATE TABLE vcluster_eiger ( id INT AUTO_INCREMENT PRIMARY KEY, label VARCHAR(50) NOT NULL, jsondata LONGTEXT NOT NULL, datetime TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL, INDEX idx_datetime (datetime), INDEX idx_label (label) );`
+
+
+
 ## Create docker volume
 docker volume create slurm_data
 
