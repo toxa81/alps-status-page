@@ -9,22 +9,21 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 
 logger = logging.getLogger(__name__)
 
-
 def fetch_data(vcluster_name):
-    response = requests.get(f"http://148.187.151.141:8000/status/{vcluster_name}")
+    response = requests.get(f"http://148.187.151.141/api/{vcluster_name}/slurm-info")
     if response.status_code == 200:
         return response.json()
     else:
         return {}
 
-def fetch_history(vcluster_name):
-    response = requests.get(f"http://148.187.151.141:8000/history/{vcluster_name}")
+def fetch_history(vcluster_name, label):
+    response = requests.get(f"http://148.187.151.141/api/{vcluster_name}/{label}/history")
     if response.status_code == 200:
         return response.json()
     else:
         return {"body" : {"count" : 0}}
 
-labels = ['todi', 'eiger', 'bristen', 'daint']
+labels = ['eiger']
 
 @ui.page('/')
 def main():
@@ -36,7 +35,7 @@ def main():
             response = fetch_data(label)
             date = response["datetime"]
             data = response["body"]
-            history = fetch_history(label)["body"]
+            history = fetch_history(label, 'slurm-info')["body"]
             # make some preparations
             hist_avail = []
             hist_alloc = []
@@ -52,6 +51,8 @@ def main():
                     hist_occupancy.append(round(100 * float(history["num_nodes_allocated"][i] / hist_avail[i]), 2))
                 else:
                     hist_occupancy.append(0)
+
+            history1 = fetch_history(label, 'scratch-response')["body"]
 
             with ui.tab_panel(tab):
                 with ui.column().classes('w-full items-center'):
@@ -78,26 +79,26 @@ def main():
                         {'name': 'Last measurment date and time (UTC)', 'value': date}
                     ]
                     ui.table(columns=columns, rows=rows, row_key='name')
+                    categories = ['1','2','3-4','5-8','9-16','17-32','33-64','65-128','129-256','>256']
+                    with ui.pyplot():
+                        plt.title('Pending jobs')
+                        plt.bar(categories, data['pending_jobs'])
+                        plt.ylabel('Number of jobs')
+                        plt.xlabel('Number of nodes')
+                        plt.xticks(rotation=90)
+                        plt.subplots_adjust(bottom=0.25)
+                        plt.gca().yaxis.set_major_locator(MaxNLocator(min_n_ticks=0, integer=True))
+
+                    with ui.pyplot():
+                        plt.title('Running jobs')
+                        plt.bar(categories, data['running_jobs'])
+                        plt.ylabel('Number of jobs')
+                        plt.xlabel('Number of nodes')
+                        plt.xticks(rotation=90)
+                        plt.subplots_adjust(bottom=0.25)
+                        plt.gca().yaxis.set_major_locator(MaxNLocator(min_n_ticks=0, integer=True))
+
                     if history["count"] > 0:
-                        categories = ['1','2','3-4','5-8','9-16','17-32','33-64','65-128','129-256','>256']
-                        with ui.pyplot():
-                            plt.title('Pending jobs')
-                            plt.bar(categories, data["pending_jobs"])
-                            plt.ylabel('Number of jobs')
-                            plt.xlabel('Number of nodes')
-                            plt.xticks(rotation=90)
-                            plt.subplots_adjust(bottom=0.25)
-                            plt.gca().yaxis.set_major_locator(MaxNLocator(min_n_ticks=0, integer=True))
-
-                        with ui.pyplot():
-                            plt.title('Running jobs')
-                            plt.bar(categories, data["running_jobs"])
-                            plt.ylabel('Number of jobs')
-                            plt.xlabel('Number of nodes')
-                            plt.xticks(rotation=90)
-                            plt.subplots_adjust(bottom=0.25)
-                            plt.gca().yaxis.set_major_locator(MaxNLocator(min_n_ticks=0, integer=True))
-
                         with ui.pyplot():
                             plt.title('Node distribution')
                             plt.plot(history["time_shift"], history["num_nodes_total"], 'k-', linewidth=2, label='total')
@@ -159,5 +160,16 @@ def main():
                             plt.ylim(bottom=0, top=1)
                             plt.xticks(range(0, 25, 1))
                             plt.violinplot(b, showmeans=True, showmedians=False, widths=1, positions=[i for i in range(25)])
+
+                    if history1["count"] > 0:
+                        with ui.pyplot():
+                            plt.title('Response time of $SCRATCH')
+                            plt.plot(history1['time_shift'], history1['real_time'], 'k-', linewidth=2, label='real_time')
+                            plt.plot(history1['time_shift'], history1['sys_time'], 'b-', label='sys_time')
+                            plt.xlabel('Hours in the past')
+                            plt.ylabel('time (sec.)')
+                            plt.ylim(bottom=0)
+                            plt.grid(axis='y')
+                            plt.legend()
 
 ui.run()

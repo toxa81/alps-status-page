@@ -19,10 +19,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-#DATABASE_URL = "mysql+mysqlconnector://root:rNAFFABczJs5hWuyyNbAEKgYD@127.0.0.1/slurm_data"
-#engine = create_engine(DATABASE_URL)
-
-engine = create_engine(os.environ['DATABASE_URL'])
+engine = create_engine(os.environ['DATABASE_URL'], pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 metadata = MetaData()
 metadata.reflect(bind=engine)
@@ -33,6 +30,7 @@ def get_table_by_name(table_name: str):
             table_name,
             metadata,
             Column('id', Integer, primary_key=True, autoincrement=True),
+            Column('label', Text, nullable=False),
             Column('jsondata', Text, nullable=False),
             Column('datetime', TIMESTAMP, nullable=False),
             autoload_with=engine,
@@ -42,27 +40,6 @@ def get_table_by_name(table_name: str):
     except NoSuchTableError:
         raise HTTPException(status_code=404, detail=f"Table '{table_name}' does not exist")
 
-
-class SlurmJob(BaseModel):
-    slurm_job_id: str
-    num_nodes: int
-
-# this data comes in from the bash script executed on the login node of a vcluster
-class vClusterStatusIn(BaseModel):
-    num_nodes_gross: int | None = None
-    num_nodes_total: int | None = None
-    num_nodes_allocated: int | None = None
-    num_nodes_idle: int | None = None
-    num_finished_jobs: int | None = None
-    running_jobs: List[SlurmJob] | None = None
-    pending_jobs: List[SlurmJob] | None = None
-    finished_job_times: List[List[int]] | None = None
-
-# generic data dictionary that is sent as a response
-class vClusterStatusOut(BaseModel):
-    body: Dict[str, Any]
-    datetime: str
-
 def get_db():
     db = SessionLocal()
     try:
@@ -71,16 +48,20 @@ def get_db():
         db.close()
 
 def get_index(num_nodes):
-# index 0: number of jobs with 1 node
-# index 1: number of jobs with 2 nodes
-# index 2: number of jobs with 3-4 nodes
-# index 3: number of jobs with 5-8 nodes
-# index 4: number of jobs with 9-16 nodes
-# index 5: number of jobs with 17-32 nodes
-# index 6: number of jobs with 33-64 nodes
-# index 7: number of jobs with 65-128 nodes
-# index 8: number of jobs with 129-256 nodes
-# index 9: number of jobs with > 256 nodes
+    '''
+    Get index of the job bin by the number of nodes job requests
+
+    index 0: job with 1 node
+    index 1: job with 2 nodes
+    index 2: job with 3-4 nodes
+    index 3: job with 5-8 nodes
+    index 4: job with 9-16 nodes
+    index 5: job with 17-32 nodes
+    index 6: job with 33-64 nodes
+    index 7: job with 65-128 nodes
+    index 8: job with 129-256 nodes
+    index 9: job with > 256 nodes
+    '''
     ranges = {
         range(1, 2): 0,
         range(2, 3): 1,
@@ -98,55 +79,61 @@ def get_index(num_nodes):
     return 9
 
 
-@app.put("/status/{vcluster}")
-def put_status(vcluster: str, st: vClusterStatusIn, db: Session = Depends(get_db)):
-    d = st.dict()
+# save any single measurement to DB
+@app.put("/api/{vcluster}/{label}")
+def put_measurement(vcluster: str, label: str, payload: Dict, db: Session = Depends(get_db)):
 
-    rj_hist = [0 for i in range(10)]
-    for e in d["running_jobs"]:
-        rj_hist[get_index(e["num_nodes"])] += 1
+    # slurm data requires special handlig
+    if label == 'slurm-info':
 
-    pj_hist = [0 for i in range(10)]
-    for e in d["pending_jobs"]:
-        job_id = e["slurm_job_id"]
-        match = re.search(r'\[(\d+)-(\d+)\]', job_id)
-        if match:
-            lower_bound = int(match.group(1))
-            upper_bound = int(match.group(2))
-            njobs = upper_bound - lower_bound + 1
-        else:
-            njobs = 1
-        pj_hist[get_index(e["num_nodes"])] += njobs
+        # running jobs histogram
+        rj_hist = [0 for i in range(10)]
+        for e in payload.get('running_jobs', []):
+            rj_hist[get_index(e['num_nodes'])] += 1
 
-    d["running_jobs"] = rj_hist
-    d["pending_jobs"] = pj_hist
+        # pending jobs histogram
+        pj_hist = [0 for i in range(10)]
+        for e in payload.get('pending_jobs', []):
+            job_id = e['slurm_job_id']
+            # look for the array job
+            match = re.search(r'\[(\d+)-(\d+)\]', job_id)
+            if match:
+                lower_bound = int(match.group(1))
+                upper_bound = int(match.group(2))
+                njobs = upper_bound - lower_bound + 1
+            else:
+                njobs = 1
+            pj_hist[get_index(e["num_nodes"])] += njobs
+
+        # substitute data
+        payload['running_jobs'] = rj_hist
+        payload['pending_jobs'] = pj_hist
 
     try:
         table = get_table_by_name(f"vcluster_{vcluster}")
-        insert_stmt = table.insert().values(jsondata=json.dumps(d, indent=2))
+        insert_stmt = table.insert().values(label=label, jsondata=json.dumps(payload, indent=2))
         db.execute(insert_stmt)
         db.commit()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    return st
+    return payload
 
-@app.get("/status/{vcluster}", response_model=vClusterStatusOut)
-def get_status(vcluster: str, db: Session = Depends(get_db)):
+@app.get("/api/{vcluster}/{label}", response_model=Dict)
+def get_measurement(vcluster: str, label: str, db: Session = Depends(get_db)):
     try:
         table = get_table_by_name(f"vcluster_{vcluster}")
-        select_stmt = select(table).order_by(table.c.datetime.desc()).limit(1)
+        select_stmt = select(table).filter(table.c.label == label).order_by(table.c.datetime.desc()).limit(1)
         result = db.execute(select_stmt).fetchone()
         if result:
-            return vClusterStatusOut(body=json.loads(result.jsondata), datetime=result.datetime.isoformat())
+            return {'body': json.loads(result.jsondata), 'datetime': result.datetime.isoformat()}
         else:
-            raise HTTPException(status_code=404, detail="Record not found")
+            raise HTTPException(status_code=404, detail='Record not found')
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@app.get("/history/{vcluster}", response_model=vClusterStatusOut)
-def get_history(vcluster: str, db: Session = Depends(get_db)):
+@app.get("/api/{vcluster}/scratch-response/history", response_model=Dict)
+def get_scratch_time_history(vcluster: str, db: Session = Depends(get_db)):
     N = 4320 # example value for N (3 days in the past)
     time_now = datetime.now()
     time_begin = time_now - timedelta(minutes=N)
@@ -154,8 +141,41 @@ def get_history(vcluster: str, db: Session = Depends(get_db)):
         table = get_table_by_name(f"vcluster_{vcluster}")
         select_stmt = (
             select(table)
-            .where(table.c.datetime.between(time_begin, time_now))
-            .order_by(table.c.datetime)
+            .where(table.c.datetime.between(time_begin, time_now), table.c.label == 'scratch-response')
+            .order_by(table.c.datetime.desc())
+        )
+        results = db.execute(select_stmt).fetchall()
+        if not results:
+            raise HTTPException(status_code=404, detail="SQL query failed")
+
+        time_shift = []
+        real_time = []
+        sys_time = []
+        for e in results:
+            d = json.loads(e[2])
+            time_shift.append((e[3] - time_now).total_seconds() / 60 / 60)
+            real_time.append(d['real'])
+            sys_time.append(d['sys'])
+        return_result = {}
+        return_result['count'] = len(results)
+        return_result['time_shift'] = time_shift
+        return_result['real_time'] = real_time
+        return_result['sys_time'] = sys_time
+        return {"body": return_result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/{vcluster}/slurm-info/history", response_model=Dict)
+def get_slurm_history(vcluster: str, db: Session = Depends(get_db)):
+    N = 4320 # example value for N (3 days in the past)
+    time_now = datetime.now()
+    time_begin = time_now - timedelta(minutes=N)
+    try:
+        table = get_table_by_name(f"vcluster_{vcluster}")
+        select_stmt = (
+            select(table)
+            .where(table.c.datetime.between(time_begin, time_now), table.c.label == 'slurm-info')
+            .order_by(table.c.datetime.desc())
         )
         results = db.execute(select_stmt).fetchall()
         if not results:
@@ -166,17 +186,37 @@ def get_history(vcluster: str, db: Session = Depends(get_db)):
         num_nodes_allocated = []
         num_nodes_idle = []
         for e in results:
-            d = json.loads(e[1])
-            time_shift.append((e[2] - time_now).total_seconds() / 60 / 60)
-            num_nodes_total.append(d["num_nodes_total"])
-            num_nodes_allocated.append(d["num_nodes_allocated"])
-            num_nodes_idle.append(d["num_nodes_idle"])
-        
-        return vClusterStatusOut(body={"count": len(results), "time_shift": time_shift,
-                                       "num_nodes_total": num_nodes_total,
-                                       "num_nodes_allocated": num_nodes_allocated,
-                                       "num_nodes_idle": num_nodes_idle}, datetime=time_now.isoformat())
+            d = json.loads(e[2])
+            time_shift.append((e[3] - time_now).total_seconds() / 60 / 60)
+            num_nodes_total.append(d['num_nodes_total'])
+            num_nodes_allocated.append(d['num_nodes_allocated'])
+            num_nodes_idle.append(d['num_nodes_idle'])
+        return_result = {}
+        return_result['count'] = len(results)
+        return_result['time_shift'] = time_shift
+        return_result['num_nodes_total'] = num_nodes_total
+        return_result['num_nodes_allocated'] = num_nodes_allocated
+        return_result['num_nodes_idle'] = num_nodes_idle
+        return {"body": return_result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/{vcluster}/{label}/{N}", response_model=Dict)
+def get_measurements(vcluster: str, label: str, N: int, db: Session = Depends(get_db)):
+    try:
+        table = get_table_by_name(f"vcluster_{vcluster}")
+        select_stmt = select(table).filter(table.c.label == label).order_by(table.c.datetime.desc()).limit(N)
+        result = db.execute(select_stmt).fetchall()
+        if result:
+            return_result = {"body" : []}
+            for r in result:
+                tmp = json.loads(r.jsondata)
+                tmp['datetime'] = r.datetime.isoformat()
+                return_result["body"].append(tmp)
+            return return_result
+        else:
+            raise HTTPException(status_code=404, detail="Record not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
