@@ -79,9 +79,11 @@ def get_index(num_nodes):
     return 9
 
 
-# save any single measurement to DB
 @app.put("/api/{vcluster}/{label}")
 def put_measurement(vcluster: str, label: str, payload: Dict, db: Session = Depends(get_db)):
+    """
+    Save any single measurement to DB
+    """
 
     # slurm data requires special handlig
     if label == 'slurm-info':
@@ -121,6 +123,9 @@ def put_measurement(vcluster: str, label: str, payload: Dict, db: Session = Depe
 
 @app.get("/api/{vcluster}/{label}", response_model=Dict)
 def get_measurement(vcluster: str, label: str, db: Session = Depends(get_db)):
+    """
+    Get a single measurment from DB
+    """
     try:
         table = get_table_by_name(f"vcluster_{vcluster}")
         select_stmt = select(table).filter(table.c.label == label).order_by(table.c.datetime.desc()).limit(1)
@@ -154,8 +159,13 @@ def get_scratch_time_history(vcluster: str, db: Session = Depends(get_db)):
         for e in results:
             d = json.loads(e[2])
             time_shift.append((e[3] - time_now).total_seconds() / 60 / 60)
-            real_time.append(d['real'])
-            sys_time.append(d['sys'])
+            if d['status'] == 'OK':
+                real_time.append(d['real'])
+                sys_time.append(d['sys'])
+            else:
+                real_time.append(0)
+                sys_time.append(0)
+
         return_result = {}
         return_result['count'] = len(results)
         return_result['time_shift'] = time_shift
@@ -187,12 +197,14 @@ def get_slurm_history(vcluster: str, db: Session = Depends(get_db)):
         num_nodes_idle = []
         for e in results:
             d = json.loads(e[2])
-            time_shift.append((e[3] - time_now).total_seconds() / 60 / 60)
-            num_nodes_total.append(d['num_nodes_total'])
-            num_nodes_allocated.append(d['num_nodes_allocated'])
-            num_nodes_idle.append(d['num_nodes_idle'])
+            nnt = d.get('num_nodes_total', 0)
+            if nnt:
+                time_shift.append((e[3] - time_now).total_seconds() / 60 / 60)
+                num_nodes_total.append(d.get('num_nodes_total', 0))
+                num_nodes_allocated.append(d.get('num_nodes_allocated', 0))
+                num_nodes_idle.append(d.get('num_nodes_idle', 0))
         return_result = {}
-        return_result['count'] = len(results)
+        return_result['count'] = len(time_shift)
         return_result['time_shift'] = time_shift
         return_result['num_nodes_total'] = num_nodes_total
         return_result['num_nodes_allocated'] = num_nodes_allocated

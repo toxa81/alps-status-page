@@ -46,7 +46,10 @@ def main():
                 hist_alloc.append(history["num_nodes_allocated"][i])
                 hist_avail.append(history["num_nodes_allocated"][i] + history["num_nodes_idle"][i])
                 hist_unavail.append(history["num_nodes_total"][i] - hist_avail[i])
-                hist_availability.append(round(100 * float(hist_avail[i] / history["num_nodes_total"][i]), 2))
+                if history['num_nodes_total'][i]:
+                    hist_availability.append(round(100 * float(hist_avail[i] / history["num_nodes_total"][i]), 2))
+                else:
+                    hist_availability.append(0)
                 if hist_avail[i]:
                     hist_occupancy.append(round(100 * float(history["num_nodes_allocated"][i] / hist_avail[i]), 2))
                 else:
