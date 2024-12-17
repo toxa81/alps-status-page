@@ -137,8 +137,11 @@ def get_measurement(vcluster: str, label: str, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/{vcluster}/scratch-response/history", response_model=Dict)
-def get_scratch_time_history(vcluster: str, db: Session = Depends(get_db)):
+@app.get("/api/history/{vcluster}/{fs}-response", response_model=Dict)
+def get_scratch_time_history(vcluster: str, fs: str, db: Session = Depends(get_db)):
+    """
+    Get history of filesystem response
+    """
     N = 4320 # example value for N (3 days in the past)
     time_now = datetime.now()
     time_begin = time_now - timedelta(minutes=N)
@@ -146,7 +149,7 @@ def get_scratch_time_history(vcluster: str, db: Session = Depends(get_db)):
         table = get_table_by_name(f"vcluster_{vcluster}")
         select_stmt = (
             select(table)
-            .where(table.c.datetime.between(time_begin, time_now), table.c.label == 'scratch-response')
+            .where(table.c.datetime.between(time_begin, time_now), table.c.label == f"{fs}-response")
             .order_by(table.c.datetime.desc())
         )
         results = db.execute(select_stmt).fetchall()
@@ -175,8 +178,11 @@ def get_scratch_time_history(vcluster: str, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/{vcluster}/slurm-info/history", response_model=Dict)
+@app.get("/api/history/{vcluster}/slurm-info", response_model=Dict)
 def get_slurm_history(vcluster: str, db: Session = Depends(get_db)):
+    """
+    Get history of slurm info
+    """
     N = 4320 # example value for N (3 days in the past)
     time_now = datetime.now()
     time_begin = time_now - timedelta(minutes=N)
